@@ -1,8 +1,9 @@
 Two player snake implemented using SDL2
 
-BUILDING:
-
+To build:
 cd (directory containing SpriteSheet.c)
 make
 
 *Note, the various images must be in the same directory as SpriteSheet or else the game won't be able to find them
+
+Then to run the game, simply do ./SpriteSheet
