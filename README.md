@@ -1,6 +1,6 @@
-## Two player snake implemented using SDL2 
+# Two player snake implemented using SDL2 
 
-# Install
+## Install
 *Requires SDL2 to be installed.*
 
 ```
