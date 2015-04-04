@@ -1,7 +1,10 @@
 QT -=gui
 TARGET=SpriteSheet
 DESTDIR=./
-SOURCES+=SpriteSheet.c
+SOURCES+=SpriteSheet.c \
+    actor.c \
+    pickup.c \
+    utils.c
 cache()
 
 QMAKE_CFLAGS=-std=c99
@@ -15,3 +18,7 @@ macx:DEFINES+=MAC_OS_X_VERSION_MIN_REQUIRED=1060
 CONFIG += console
 CONFIG -= app_bundle
 
+HEADERS += \
+    actor.h \
+    pickup.h \
+    utils.h

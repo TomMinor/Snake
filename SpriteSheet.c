@@ -17,6 +17,9 @@
 #include <stdbool.h>
 #include <time.h>
 
+#include "actor.h"
+#include "pickup.h"
+
 #define SNAKE_RADIUS      (64)
 
 #define BODY_OFFSET       (SNAKE_RADIUS*8)
@@ -33,126 +36,17 @@
 #define PLAYER2_SPAWNY    (HEIGHT/2)
 #define PLAYER2_SEGMENTS  (24)
 
-#define PICKUP_TOTAL      (24)
-#define PICKUP_SIZE       (28)
-#define KNIGHT_SIZE       (64)
-#define KNIGHT_FRAMETOTAL (9)
-
 const int WIDTH=800;
 const int HEIGHT=600;
 
-// These correspond to each row in the knight/snake spritesheets
-typedef enum{
-    NOTMOVING = -1,
-    UP        = 0,
-    LEFT      = 1,
-    DOWN      = 2,
-    RIGHT     = 3,
-    UPLEFT    = 4,
-    UPRIGHT   = 5,
-    DOWNLEFT  = 6,
-    DOWNRIGHT = 7
-} Move;
-
-// Flags that will be OR'd together, such as BODY|EAT of HEAD|MOVING,
-// and used to determine the correct animation
-typedef enum{
-  NONE   = 0x00,
-  BODY   = 0x01,
-  ALT    = 0x02,  // Alternate body colour
-  HEAD   = 0x04,
-  MOVING = 0x08,
-  EATING = 0x0F
-} NodeState;
-
-typedef enum{
-  BLUE,
-  GREEN,
-  RED,
-  CRYSTAL
-} Gem;
-
-typedef struct Coord
-{
-  int x;
-  int y;
-} Coord;
-
-// Can store either a regular static Pickup (gem)
-// or a mobile knight sprite
-typedef struct {
-  union
-  {
-    Gem type;       // Used by gem
-    Coord offset;   // Used by knight
-  } Anim;
-
-  SDL_Rect pos;
-
-  bool canTravel;   // True if the Pickup is a knight
-
-  bool isVisible;
-} Pickup;
-
-// The snake is implemented using a doubly-linked list
-typedef struct Node{
-  NodeState state;
-  SDL_Rect pos;
-
-  struct SEQUENCE{
-      unsigned int xOffset;
-      unsigned int yOffset;
-      unsigned int currentFrame;
-  }anim;
-  Move idleDirection;
-
-  struct Node *next;
-  struct Node *prev;
-} Node;
-
-
-// Snake
-Node *createSnake(Node *_head, int _count, Node *_body);
-Node *getLastSegment(Node * _root);
-Node *createSegment(Node * _dataSegment);
-void insertAfterSegment(Node *_listNode, Node *_newNode, bool _isNewNodeLinked);
-void growsnake(Node *_head, Node **io_tail, Node *_data);
-void linkSegments(Node *_node, Node *_nodeToLinkTo);
-void unlinkNextSegment(Node *_linkedNode);
-void unlinkPrevSegment(Node *_linkedNode);
-void updateSegmentFrames(Node *_head);
-void freeList(Node **io_root);
-bool collidesWithSelf(Node *_head);
-
-// State
-bool getState(Node *_node, NodeState _state);
-void addState(Node *_node, NodeState _state);
-void removeState(Node *_node, NodeState _state);
-void setState(Node *_node, NodeState _state);
-
 // Rendering
-SDL_Rect getFrameOffset(Move _dir, int _size, int _frame, int _startOffset);
 void renderBackground(SDL_Renderer *_renderer, SDL_Texture  *_tex);
 void displayGameOver(SDL_Renderer *_renderer, SDL_Texture  *_tex, int _firstScore, int _secondScore);
 void renderSnakeHead( Node *_head, SDL_Renderer * _renderer, SDL_Texture *_tex);
 void renderSnakeBody( Node *_head, Node *_tail, SDL_Renderer *_renderer, SDL_Texture *_tex );
-void renderPickups(Pickup *_array, SDL_Renderer *_renderer, SDL_Texture* _pickupTex, SDL_Texture* _specialTex);
-
-// Movement
-void moveSprite(Move _dir, SDL_Rect *io_pos, int _offset);
-void updateSnakePos(Node * _head, Node ** io_tail, Move _dir);
-void shiftSnakeBody(Node *_head, Node **_tail, SDL_Rect *_oldHeadPos);
 
 // Input
-Move getRandomMovement();
-Move getInputMovement(SDL_Scancode _up, SDL_Scancode _down, SDL_Scancode _left, SDL_Scancode _right);
-
-// Pickups
-void initialisePickups(Pickup *_array);
-
-bool detectCollision(const SDL_Rect *_a, const SDL_Rect *_b, int _clipRadius);
-int randRange(int _Min, int _Max);
-
+Move getInputMovement(SDL_Scancode _up, SDL_Scancode _down, SDL_Scancode _left, SDL_Scancode _right, Move _oldDirectio);
 
 int main()
 {
@@ -181,11 +75,11 @@ int main()
   SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
 
   // SDL image is an abstraction for all images
-  SDL_Surface *imageSnake;
-  SDL_Surface *imagePickup;
-  SDL_Surface *imageKnight;
-  SDL_Surface *imageGameOver;
-  SDL_Surface *imageBackground;
+  SDL_Surface *imageSnake = NULL;
+  SDL_Surface *imagePickup = NULL;
+  SDL_Surface *imageKnight = NULL;
+  SDL_Surface *imageGameOver = NULL;
+  SDL_Surface *imageBackground = NULL;
 
   imageSnake = IMG_Load("snake.png");
   imagePickup = IMG_Load("Gems2.png");
@@ -199,35 +93,34 @@ int main()
     return EXIT_FAILURE;
   }
 
-  // SDL texture converts the image to a texture suitable for SDL rendering  / blitting
-  // once we have the texture it will be store in hardware and we don't need the image data anymore
+  srand(time(NULL));
+
+  // Load textures from file
+  SDL_Texture *gameOver = NULL;
+  gameOver = SDL_CreateTextureFromSurface(renderer, imageGameOver);
+  SDL_FreeSurface(imageGameOver);
+
+  SDL_Texture *background = NULL;
+  background = SDL_CreateTextureFromSurface(renderer, imageBackground);
+  SDL_FreeSurface(imageBackground);
+
+  SDL_Texture *pickup = NULL;
+  pickup = SDL_CreateTextureFromSurface(renderer, imagePickup);
+  SDL_FreeSurface(imagePickup);
+
+  SDL_Texture *special = NULL;
+  special = SDL_CreateTextureFromSurface(renderer, imageKnight);
+  SDL_FreeSurface(imageKnight);
+
   SDL_Texture *snakePlayer1 = NULL;
   SDL_Texture *snakePlayer2 = NULL;
-  SDL_Texture *pickup = NULL;
-  SDL_Texture *special = NULL;
-  SDL_Texture *gameOver = NULL;
-  SDL_Texture *background = NULL;
-
-  // Create the textures
-  pickup = SDL_CreateTextureFromSurface(renderer, imagePickup);
-  special = SDL_CreateTextureFromSurface(renderer, imageKnight);
-  gameOver = SDL_CreateTextureFromSurface(renderer, imageGameOver);
-  background = SDL_CreateTextureFromSurface(renderer, imageBackground);
-
   snakePlayer1  = SDL_CreateTextureFromSurface(renderer, imageSnake);
   snakePlayer2 = SDL_CreateTextureFromSurface(renderer, imageSnake);
+  SDL_FreeSurface(imageSnake);
 
   // Set player colours
   SDL_SetTextureColorMod(snakePlayer1, 255, 96, 0);
   SDL_SetTextureColorMod(snakePlayer2, 255, 255, 0);
-
-  // Free the image
-  SDL_FreeSurface(imageSnake);
-  SDL_FreeSurface(imagePickup);
-  SDL_FreeSurface(imageKnight);
-  SDL_FreeSurface(imageGameOver);
-
-  srand(time(NULL));
 
   // Initialising snake spawns and sizes
   Node player1HeadData;
@@ -313,13 +206,13 @@ int main()
         }
       }// end PollEvent loop
 
-
-      // Read the input from the players
       player1Direction = getInputMovement(SDL_SCANCODE_UP,   SDL_SCANCODE_DOWN,
-                                          SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT);
+                                          SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT,
+                                          player1Head->idleDirection);
 
       player2Direction = getInputMovement(SDL_SCANCODE_W,  SDL_SCANCODE_S,
-                                          SDL_SCANCODE_A,  SDL_SCANCODE_D);
+                                          SDL_SCANCODE_A,  SDL_SCANCODE_D,
+                                          player2Head->idleDirection);
 
 
       // Check if the snakes collect any Pickups
@@ -611,86 +504,6 @@ void setState(Node *_node,
   _node->state = _state;
 }
 
-
-////
-/// \brief GetFrameOffset Calculates the x/y frame offset
-/// based on move direction and the current frame
-/// \param _dir The move direction
-/// \param _size
-/// \param _frame The current frame
-/// \param _startOffset Which column to start the animation from
-/// \return An SDL_Rect with the correct animation offsets
-///
-SDL_Rect getFrameOffset(Move _dir,
-                        int _size,
-                        int _frame,
-                        int _startOffset)
-{
-  SDL_Rect src;
-  src.w = _size;
-  src.h = _size;
-  src.x = _startOffset + _size*_frame;
-  src.y = _size*_dir;
-
-  return src;
-}
-
-////
-/// \brief CreateSnake
-///  Creates the head, and optionally a specified amount of body, of a snake.
-/// \param _headSegment Template data to use to make the head segment
-/// \param _bodySegmentCount How many body segments to create
-/// \param _bodySegment Template data to use to make the body segments
-/// \return A pointer to the root/head segment of a new snake
-///
-Node *createSnake(Node *_head,
-                  int _count,
-                  Node *_body)
-{
-  Node *root = createSegment(_head);
-  setState(root, HEAD);
-  setState(_body, BODY);
-
-  const int StripeSize = 3;
-  int counter = 0;
-
-  Node *listptr = root;
-  if(_count > 0)
-  {
-    //Create and position the body segments
-    for(int i = 0; i < _count; ++i)
-    {
-      if(listptr!=NULL)
-      {  
-        // Set the initial strip pattern on the snake
-        // and change the starting frame for a ripple effect
-        counter++;
-        if(counter <= StripeSize)
-        {
-          addState(_body, ALT);
-          _body->anim.currentFrame = 1;
-        }
-        else if(counter < (StripeSize*2))
-        {
-          removeState(_body, ALT);
-          _body->anim.currentFrame = 0;
-        }
-        else
-        {
-          counter = 0;
-        }
-
-        insertAfterSegment(listptr, createSegment(_body), false);
-        updateSnakePos(root, &listptr->next, RIGHT);
-
-        listptr = getLastSegment(root);
-      }
-    }
-  }
-
-  return root;
-}
-
 ///
 /// \brief freeList Frees all of the memory used by a list of segments
 /// \param io_root
@@ -847,29 +660,15 @@ void updateSegmentFrames(Node *_head)
   {
     if(isMoving)
     {
-      // Update head segment
-      if(getState(node, HEAD))
+      unsigned int frameTotal = getState(node, HEAD) ? c_headMove : c_bodyMove;
+
+      if(node->anim.currentFrame < frameTotal)
       {
-        if(node->anim.currentFrame < c_headMove)
-        {
-          node->anim.currentFrame++;
-        }
-        else
-        {
-          node->anim.currentFrame = 0;
-        }
+        node->anim.currentFrame++;
       }
       else
       {
-        // Update body segment
-        if(node->anim.currentFrame < c_bodyMove)
-        {
-          node->anim.currentFrame++;
-        }
-        else
-        {
-          node->anim.currentFrame = 0;
-        }
+        node->anim.currentFrame = 0;
       }
     }
 
@@ -934,323 +733,65 @@ void renderSnakeBody( Node *_head,
     _tail = _tail->prev;
   }
 }
-
 ////
-/// \brief RandomMovement
-///
-/// \return A random move direction
-///
-Move getRandomMovement()
-{
-  switch(randRange(0, 3))
-  {
-    case 0:  { return UP;    break;}
-    case 1:  { return DOWN;  break;}
-    case 2:  { return LEFT;  break;}
-    default: { return RIGHT; break;}
-  }
-}
-
-////
-/// \brief GetInputMovement Checks for input from the user
+/// \brief GetInputMovement Checks for input from the user, pressing opposing keys will return NOTMOVING
 /// \param _up
 /// \param _down
 /// \param _left
 /// \param _right
-/// \return A move direction, based on the keys pressed
+/// \return A move direction, based on the keys pressed.
 ///
 Move getInputMovement(SDL_Scancode _up,
                       SDL_Scancode _down,
                       SDL_Scancode _left,
-                      SDL_Scancode _right)
+                      SDL_Scancode _right,
+                      Move _oldDirection)
 {
   // Alternate method of reading key input, doesn't produce any delay while holding down a key
   const Uint8 *KEY = SDL_GetKeyboardState(NULL);
 
-  if(KEY[_up]   &&  KEY[_left] ) { return UPLEFT;    }
-  if(KEY[_up]   &&  KEY[_right]) { return UPRIGHT;   }
-  if(KEY[_down] &&  KEY[_left] ) { return DOWNLEFT;  }
-  if(KEY[_down] &&  KEY[_right]) { return DOWNRIGHT; }
+  Move newDirection = NOTMOVING;
 
-  if(KEY[_up]   ) { return UP;   }
-  if(KEY[_down] ) { return DOWN; }
-  if(KEY[_left] ) { return LEFT; }
-  if(KEY[_right]) { return RIGHT;}
-
-  return NOTMOVING;
-}
-
-///
-/// \brief MoveSprite Moves an SDL_Rect in the direction passed,
-/// supports diagonal movement
-/// \param _dir The move direction
-/// \param io_pos
-/// \param _offset How much to offset in the direction
-///
-void moveSprite(Move _dir,
-                SDL_Rect *io_pos,
-                int _offset)
-{
-  // Put me in a function, reuse me for the sprite knights
-  if(_dir == LEFT)  { io_pos->x -= _offset; }
-  if(_dir == RIGHT) { io_pos->x += _offset; }
-
-  if(_dir == UP   || _dir == UPLEFT   || _dir == UPRIGHT)
+  if(KEY[_left] )
   {
-    io_pos->y -= _offset;
-    if(_dir == UPLEFT)    { io_pos->x -= _offset; }
-    if(_dir == UPRIGHT)   { io_pos->x += _offset; }
+      newDirection = LEFT;
   }
-
-  if(_dir == DOWN || _dir == DOWNLEFT || _dir == DOWNRIGHT)
+  if(KEY[_right] )
   {
-    io_pos->y += _offset;
-    if(_dir == DOWNLEFT)  { io_pos->x -= _offset; }
-    if(_dir == DOWNRIGHT) { io_pos->x += _offset; }
+      newDirection = RIGHT;
   }
-
-  // If the player attempts to walk offscreen, wrap their position around to the opposite side
-  if(io_pos->y <= -io_pos->h)    { io_pos->y += (HEIGHT + io_pos->h * 2); }
-  if(io_pos->y >= HEIGHT)        { io_pos->y -= (HEIGHT + io_pos->h * 2); }
-
-  if(io_pos->x <= -io_pos->w)    { io_pos->x += (WIDTH + io_pos->w * 2); }
-  if(io_pos->x >= WIDTH)         { io_pos->x -= (WIDTH + io_pos->w * 2); }
-
-}
-
-///
-/// \brief UpdateSnakePos Offsets the snake, sets up the state of the head
-/// and moves the rest of the body
-/// \param _head
-/// \param io_tail
-/// \param _dir The direction the head should move
-///
-void updateSnakePos(Node * _head,
-                    Node ** io_tail,
-                    Move _dir)
-{
-  if(_head != NULL && *io_tail!=NULL)
+  if(KEY[_up] )
   {
-    if(_dir != NOTMOVING)
-    {
-      const int segmentRadius = _head->pos.h;
-      const int moveOffset = segmentRadius/4;
-      Node newNeck = *_head; // Keep track of the head's old position
-
-      addState(_head, MOVING);
-
-      moveSprite(_dir, &_head->pos, moveOffset);
-
-      // Store the last move direction so the head
-      // points in the right direction when there is no input
-      _head->idleDirection = _dir;
-
-      shiftSnakeBody(_head, io_tail, &newNeck.pos);
-    }
-    else
-    {
-      removeState(_head, MOVING);
-    }
-  }
-}
-
-///
-/// \brief shiftSnakeBody
-/// Shifts the tail end of the snake into the old position of the head,
-/// giving the effect that the snake is sliding without having to iterate
-/// through the entire list every movement
-///
-/// \param _head
-/// \param _tail
-/// \param _oldHeadPos The position of the head before it was offset
-///
-void shiftSnakeBody(Node *_head,
-                    Node **io_tail,
-                    SDL_Rect *_oldHeadPos)
-{
-  if(_head == NULL || io_tail == NULL)
-  {
-    return;
-  }
-
-  // We must only be dealing with 2 segments,
-  // so don't attempt to rearrange the linked segments
-  if((*io_tail)->prev == _head)
-  {
-    (*io_tail)->pos = *_oldHeadPos;
-    return;
-  }
-
-  Node *head = _head;
-  Node *neck = _head->next;
-  Node *newneck = *io_tail;
-  newneck->pos = *_oldHeadPos;
-
-  // The new tail will be the second to last segment
-  *io_tail = (*io_tail)->prev;
-
-  // Remove the swallow effect when it reaches the tail
-  if(getState(*io_tail, EATING))
-  {
-    removeState(*io_tail, EATING);
-  }
-
-  unlinkNextSegment(newneck->prev);
-
-  linkSegments(head, newneck);
-  linkSegments(newneck, neck);
-}
-
-///
-/// \brief InitialisePickups Sets up random position and type/direction for each pickup
-/// \param _array Array of pickups
-///
-void initialisePickups(Pickup *_array)
-{
-  // Populate Pickup array with randomised positions/types
-  for(int i = 0; i < PICKUP_TOTAL; ++i)
-  {
-    // A hacky way of setting a 1/5 chance of creating a moving Pickup (knight)
-    _array[i].canTravel = !(randRange(0, 4));
-
-    if(_array[i].canTravel)
-    {
-      _array[i].pos.x = randRange(0, WIDTH - KNIGHT_SIZE);
-      _array[i].pos.y = randRange(0, HEIGHT - KNIGHT_SIZE);
-
-      _array[i].Anim.offset.x = 0;
-      _array[i].Anim.offset.y = getRandomMovement();
-      //Randomly choose a knight direction
-    }
-    else
-    {
-      _array[i].pos.x = randRange(0, WIDTH - PICKUP_SIZE);
-      _array[i].pos.y = randRange(0, HEIGHT - PICKUP_SIZE);
-
-      //Randomly choose a type of gem
-      _array[i].Anim.type = randRange(BLUE, CRYSTAL);
-    }
-
-    _array[i].isVisible = true;
-  }
-}
-
-///
-/// \brief RenderPickups Renders gems and knights onto _renderer, the type is automatically
-/// determined
-/// \param _array Array of pickups
-/// \param _renderer The renderer to RenderCopy() to
-/// \param _pickupTex The sprite sheet to use for regular pickups (gems)
-/// \param _specialTex The sprite sheet to use for moving pickups (knights)
-///
-void renderPickups(Pickup *_array,
-                   SDL_Renderer *_renderer,
-                   SDL_Texture *_pickupTex,
-                   SDL_Texture *_specialTex)
-{
-  for(int i=0; i < PICKUP_TOTAL; i++)
-  {
-    SDL_Rect src;
-    SDL_Rect dst;
-
-    if(_array[i].isVisible)
-    {
-      dst.x = _array[i].pos.x;
-      dst.y = _array[i].pos.y;
-
-      if(_array[i].canTravel)
-      {
-        src = getFrameOffset(_array[i].Anim.offset.y, KNIGHT_SIZE,
-                             _array[i].Anim.offset.x, 0);
-
-        dst.w = KNIGHT_SIZE;
-        dst.h = KNIGHT_SIZE;
-
-        SDL_RenderCopy(_renderer, _specialTex, &src, &dst);
-      }
+      if(KEY[_left])
+        newDirection = UPLEFT;
+      else if(KEY[_right])
+        newDirection = UPRIGHT;
       else
-      {
-        src = getFrameOffset(0, PICKUP_SIZE, _array[i].Anim.type, 0);
-
-        dst.w = PICKUP_SIZE;
-        dst.h = PICKUP_SIZE;
-
-        SDL_RenderCopy(_renderer, _pickupTex, &src, &dst);
-      }
-    }
+        newDirection = UP;
   }
-}
-
-///
-/// \brief CollidesWithSelf Checks if the snake has collided with any part of it's body
-/// \param _head The root segment
-/// \return True if there is any collision, otherwise false
-///
-bool collidesWithSelf(Node *_head)
-{
-  // Only check every few segments, as they overlap
-  const int c_segmentsToSkip = 8;
-  int counter = 0;
-
-  Node *tmp = _head;
-
-  while(tmp != NULL)
+  if(KEY[_down] )
   {
-    counter++;
-
-    if((counter % c_segmentsToSkip) == 0)
-    {
-      if(detectCollision(&_head->pos, &tmp->pos, 14))
-      {
-        return true;
-      }
-    }
-
-    tmp = tmp->next;
+      if(KEY[_left])
+        newDirection = DOWNLEFT;
+      else if(KEY[_right])
+        newDirection = DOWNRIGHT;
+      else
+        newDirection = DOWN;
   }
 
-  return false;
+  // Quick and dirty way of checking if the user is trying to move in 2 directions at once
+  // (this would mean instant death for them, as the snake collides with itself)
+  bool opposingDirection = (_oldDirection == LEFT   && newDirection == RIGHT)
+                        || (_oldDirection == RIGHT  && newDirection == LEFT)
+                        || (_oldDirection == UP     && newDirection == DOWN)
+                        || (_oldDirection == DOWN   && newDirection == UP)
+                        || (_oldDirection == UPRIGHT   && newDirection == DOWNLEFT)
+                        || (_oldDirection == UPLEFT    && newDirection == DOWNRIGHT)
+                        || (_oldDirection == DOWNLEFT  && newDirection == UPRIGHT)
+                        || (_oldDirection == DOWNRIGHT && newDirection == UPLEFT);
+
+  return (opposingDirection) ? NOTMOVING : newDirection;
 }
 
-///
-/// \brief DetectCollision Used to determine if two rectangles collide
-/// \param _a First rectangle
-/// \param _b Second rectangle
-/// \param _clipRadius How many pixels within the pickup the rect must be before the collision is valid,
-/// prevents the player from collecting a pick up by merely clipping it's edge
-/// \return True if collision, False if not
-///
-bool detectCollision(const SDL_Rect *_a, const SDL_Rect *_b, int _clipRadius)
-{
-  //Checks all the edges for cases where it is impossible to intersect
-  //such as the left edge of rect _b being to the right of rect _a's right edge
 
-  const int c_aLeft   = _a->x + _clipRadius;
-  const int c_aRight  = _a->x + _a->w - _clipRadius;
-  const int c_aTop    = _a->y + _clipRadius;
-  const int c_aBottom = _a->y + _a->h - _clipRadius;
 
-  const int c_bLeft   = _b->x + _clipRadius;
-  const int c_bRight  = _b->x + _b->w - _clipRadius;
-  const int c_bTop    = _b->y + _clipRadius;
-  const int c_bBottom = _b->y + _b->h - _clipRadius;
-
-  // No collision possible if any of these cases are true
-  if((c_aLeft > c_bRight) || (c_aRight < c_bLeft) ||
-     (c_aBottom < c_bTop) || (c_aTop > c_bBottom))
-  {
-
-    return false;
-  }
-
-  return true;
-}
-
-/// @brief RandRange Returns a random value between _min and _max
-/// Modified : Removed srand initialisation, it's now part of main()
-/// 'tripplet' (December 9, 2011). Stack Overflow.
-/// [Accessed 2013]. Available from: <http://stackoverflow.com/questions/8449234/c-random-number-between-2-numbers-reset>.
-int randRange(const int _min, const int _max)
-{
-  return (rand()%((_max+1)-_min)+_min);
-}
